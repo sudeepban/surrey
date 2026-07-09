@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Surrey Lobby</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="joinScreen" class="screen">
+  <div class="join-card">
+    <h1>🚲 Surrey Lobby</h1>
+    <p>4 seats. Get in one. Push someone out if you have to.</p>
+    <input id="nameInput" maxlength="16" placeholder="Your name" autocomplete="off" />
+    <button id="joinBtn">Join Lobby</button>
+    <p id="joinError" class="error"></p>
+  </div>
+</div>
+
+<div id="gameScreen" class="screen hidden">
+  <div id="hud">
+    <div id="status">Walk up to the bike and press <kbd>E</kbd> to sit. Stand next to a taken seat and press <kbd>E</kbd> to push them off.</div>
+    <div id="countdown" class="hidden"></div>
+  </div>
+  <canvas id="canvas" width="900" height="560"></canvas>
+  <div id="rosterWrap">
+    <div id="roster"></div>
+  </div>
+</div>
+
+<div id="startedScreen" class="screen hidden">
+  <div class="join-card">
+    <h1>🚲💨 The surrey rolls out!</h1>
+    <p>All 4 seats locked in. Ride on.</p>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="client.js"></script>
+</body>
+</html>

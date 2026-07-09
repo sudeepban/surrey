@@ -1,0 +1,16 @@
+{
+  "name": "surrey-lobby",
+  "version": "1.0.0",
+  "description": "Multiplayer lobby for a 4-seat surrey bike game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1"
+  }
+}
