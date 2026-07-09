@@ -12,10 +12,12 @@
 
   const socket = io();
   let myId = null;
-  let seatPositions = [];
+  let seats = []; // [{x,y,type,wheel,pedal,index}]
+  let dogCarrier = null;
   let latestState = { players: [], gameState: 'lobby', countdownValue: 0 };
   const SEAT_RADIUS = 60;
   const PLAYER_RADIUS = 18;
+  const SEAT_LABELS = ['basket', 'front-left', 'front-center', 'front-right', 'back-left'];
 
   function showScreen(el) {
     [joinScreen, gameScreen, startedScreen].forEach(s => s.classList.add('hidden'));
@@ -37,9 +39,14 @@
     joinError.textContent = reason;
   });
 
-  socket.on('joined', ({ id, seatPositions: seats }) => {
+  socket.on('joined', ({ id, seats: seatData, dogCarrier: carrier, canvas: dims }) => {
     myId = id;
-    seatPositions = seats;
+    seats = seatData.map((s, i) => ({ ...s, index: i }));
+    dogCarrier = carrier;
+    if (dims) {
+      canvas.width = dims.w;
+      canvas.height = dims.h;
+    }
     showScreen(gameScreen);
   });
 
@@ -74,7 +81,7 @@
         const state = document.createElement('span');
         if (p.seat !== null) {
           state.className = 'roster-seat';
-          state.textContent = ` seat ${p.seat + 1}`;
+          state.textContent = ` ${SEAT_LABELS[p.seat] || 'seat ' + (p.seat + 1)}`;
         } else {
           state.className = 'roster-standing';
           state.textContent = ' standing';
@@ -171,80 +178,151 @@
     ctx.restore();
   }
 
-  function drawBike() {
-    if (!seatPositions.length) return;
-    const first = seatPositions[0];
-    const last = seatPositions[seatPositions.length - 1];
-    const frameY = first.y;
-
-    // main frame bar
-    ctx.save();
-    ctx.strokeStyle = '#c62828';
-    ctx.lineWidth = 14;
-    ctx.lineCap = 'round';
+  function roundRect(x, y, w, h, r) {
     ctx.beginPath();
-    ctx.moveTo(first.x - 60, frameY + 30);
-    ctx.lineTo(last.x + 60, frameY + 30);
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function highlightRing(seatIndex, seat) {
+    const occ = latestState.players.find(p => p.seat === seatIndex);
+    const me = latestState.players.find(p => p.id === myId);
+    if (!me || me.seat !== null) return;
+    const d = Math.hypot(me.x - seat.x, me.y - seat.y);
+    if (d >= SEAT_RADIUS) return;
+    ctx.beginPath();
+    ctx.ellipse(seat.x, seat.y, 34, 24, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = occ ? '#ff5252' : '#7ee787';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+
+  function drawSeat(seat) {
+    if (seat.pedal) {
+      ctx.fillStyle = '#333';
+      ctx.fillRect(seat.x - 14, seat.y + 34, 28, 10);
+    }
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(seat.x, seat.y, 30, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+    highlightRing(seat.index, seat);
+    ctx.restore();
+
+    if (seat.wheel) drawSteeringWheel(seat.x, seat.y - 40);
+  }
+
+  function drawBasketSeat(seat) {
+    ctx.save();
+    ctx.strokeStyle = '#b0bec5';
+    ctx.lineWidth = 3;
+    const w = 76, h = 54;
+    ctx.strokeRect(seat.x - w / 2, seat.y - h / 2, w, h);
+    for (let i = 1; i < 4; i++) {
+      const yy = seat.y - h / 2 + (h / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(seat.x - w / 2, yy);
+      ctx.lineTo(seat.x + w / 2, yy);
+      ctx.stroke();
+    }
+    ctx.restore();
+    drawSeat(seat);
+  }
+
+  function drawDogCarrier(pos) {
+    ctx.save();
+    ctx.fillStyle = '#2b2b2b';
+    roundRect(pos.x - 38, pos.y - 30, 76, 60, 10);
+    ctx.fill();
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 2;
     ctx.stroke();
 
-    // diagonal struts up to each seat
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    roundRect(pos.x - 26, pos.y - 20, 52, 30, 6);
+    ctx.fill();
+
+    ctx.font = '34px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🐶', pos.x, pos.y - 3);
+    ctx.restore();
+
+    ctx.fillStyle = '#d7d7d7';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('dog carrier', pos.x, pos.y + 42);
+  }
+
+  function drawBike() {
+    if (!seats.length || !dogCarrier) return;
+    const basket = seats.find(s => s.type === 'basket');
+    const bench = seats.filter(s => s.type === 'bench');
+    const backSeat = seats.find(s => s.type === 'back');
+
+    const benchBarY = bench[0].y + 30;
+    const backBarY = backSeat.y + 30;
+    const benchMinX = Math.min(...bench.map(s => s.x)) - 60;
+    const benchMaxX = Math.max(...bench.map(s => s.x)) + 60;
+    const backMinX = Math.min(backSeat.x, dogCarrier.x) - 60;
+    const backMaxX = Math.max(backSeat.x, dogCarrier.x) + 60;
+    const benchCenterX = bench[Math.floor(bench.length / 2)].x;
+    const backCenterX = (backSeat.x + dogCarrier.x) / 2;
+
+    ctx.save();
+    ctx.strokeStyle = '#c62828';
+    ctx.lineCap = 'round';
+
+    ctx.lineWidth = 14;
+    ctx.beginPath();
+    ctx.moveTo(benchMinX, benchBarY);
+    ctx.lineTo(benchMaxX, benchBarY);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(backMinX, backBarY);
+    ctx.lineTo(backMaxX, backBarY);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(benchCenterX, benchBarY);
+    ctx.lineTo(backCenterX, backBarY);
+    ctx.stroke();
+
     ctx.lineWidth = 8;
-    seatPositions.forEach(seat => {
+    ctx.beginPath();
+    ctx.moveTo(basket.x, basket.y + 20);
+    ctx.lineTo(basket.x, benchBarY);
+    ctx.stroke();
+    bench.forEach(seat => {
       ctx.beginPath();
-      ctx.moveTo(seat.x, frameY + 30);
+      ctx.moveTo(seat.x, benchBarY);
       ctx.lineTo(seat.x, seat.y);
       ctx.stroke();
     });
+    ctx.beginPath();
+    ctx.moveTo(backSeat.x, backBarY);
+    ctx.lineTo(backSeat.x, backSeat.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(dogCarrier.x, backBarY);
+    ctx.lineTo(dogCarrier.x, dogCarrier.y);
+    ctx.stroke();
     ctx.restore();
 
-    // wheels at both ends
-    drawWheel(first.x - 60, frameY + 30, 34);
-    drawWheel(last.x + 60, frameY + 30, 34);
+    // wheels: one steerable front wheel above the basket, two rear wheels under the back row
+    drawWheel(basket.x, basket.y - 60, 28);
+    drawWheel(backSeat.x, backBarY + 50, 32);
+    drawWheel(dogCarrier.x, backBarY + 50, 32);
 
-    // seats + pedals + steering wheels
-    seatPositions.forEach((seat, i) => {
-      // pedal
-      ctx.fillStyle = '#333';
-      ctx.fillRect(seat.x - 14, seat.y + 34, 28, 10);
-
-      // seat cushion
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      const occ = latestState.players.find(p => p.seat === i);
-      ctx.beginPath();
-      ctx.ellipse(seat.x, seat.y, 30, 20, 0, 0, Math.PI * 2);
-      ctx.fill();
-      if (!occ) {
-        // glow ring if empty and someone standing is close enough to sit
-        const me = latestState.players.find(p => p.id === myId);
-        if (me && me.seat === null) {
-          const d = Math.hypot(me.x - seat.x, me.y - seat.y);
-          if (d < SEAT_RADIUS) {
-            ctx.beginPath();
-            ctx.ellipse(seat.x, seat.y, 34, 24, 0, 0, Math.PI * 2);
-            ctx.strokeStyle = '#7ee787';
-            ctx.lineWidth = 3;
-            ctx.stroke();
-          }
-        }
-      } else if (occ.id !== myId) {
-        const me = latestState.players.find(p => p.id === myId);
-        if (me && me.seat === null) {
-          const d = Math.hypot(me.x - seat.x, me.y - seat.y);
-          if (d < SEAT_RADIUS) {
-            ctx.beginPath();
-            ctx.ellipse(seat.x, seat.y, 34, 24, 0, 0, Math.PI * 2);
-            ctx.strokeStyle = '#ff5252';
-            ctx.lineWidth = 3;
-            ctx.stroke();
-          }
-        }
-      }
-      ctx.restore();
-
-      // steering wheel on the two front-most seats
-      if (i < 2) drawSteeringWheel(seat.x, seat.y - 40);
-    });
+    drawBasketSeat(basket);
+    bench.forEach(drawSeat);
+    drawSeat(backSeat);
+    drawDogCarrier(dogCarrier);
   }
 
   function drawPlayer(p) {

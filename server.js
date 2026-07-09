@@ -9,21 +9,28 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// --- World / bike geometry (must match public/client.js) ---
-const CANVAS_W = 900;
-const CANVAS_H = 560;
-const SEAT_POSITIONS = [
-  { x: 260, y: 300 },
-  { x: 380, y: 300 },
-  { x: 500, y: 300 },
-  { x: 620, y: 300 },
+// --- World / bike geometry ---
+// The surrey has 5 human seats: a basket seat out front, a bench of 3 across
+// the middle, and one seat at the back-left. The back-right spot is taken up
+// by a (non-playable) dog carrier with an Akita in it.
+const CANVAS_W = 700;
+const CANVAS_H = 680;
+const SEATS = [
+  { x: 350, y: 170, type: 'basket', wheel: false, pedal: false }, // 0: front basket
+  { x: 220, y: 330, type: 'bench', wheel: true, pedal: true },    // 1: front row left
+  { x: 350, y: 330, type: 'bench', wheel: false, pedal: true },   // 2: front row center
+  { x: 480, y: 330, type: 'bench', wheel: true, pedal: true },    // 3: front row right
+  { x: 250, y: 480, type: 'back', wheel: false, pedal: true },    // 4: back left
 ];
+const SEAT_POSITIONS = SEATS.map(s => ({ x: s.x, y: s.y }));
+const DOG_CARRIER = { x: 450, y: 480 };
 const SEAT_RADIUS = 60; // how close you must be to sit/push
 const PLAYER_SPEED = 220; // px/sec
 const PLAYER_RADIUS = 18;
 const COUNTDOWN_SECONDS = 5;
+const MAX_PLAYERS = SEATS.length;
 
-const COLORS = ['#ff5252', '#4fc3f7', '#ffca28', '#81c784'];
+const COLORS = ['#ff5252', '#4fc3f7', '#ffca28', '#81c784', '#ba68c8'];
 
 const players = {}; // id -> player
 let countdownTimer = null;
@@ -31,14 +38,13 @@ let countdownValue = 0;
 let gameState = 'lobby'; // 'lobby' | 'countdown' | 'started'
 
 function spawnPosition(index) {
-  // scatter standing spawn points away from the bike
+  // scatter standing spawn points away from the bike, in the side margins
   const spots = [
-    { x: 100, y: 460 },
-    { x: 200, y: 480 },
-    { x: 700, y: 480 },
-    { x: 800, y: 460 },
-    { x: 150, y: 120 },
-    { x: 750, y: 120 },
+    { x: 80, y: 600 },
+    { x: 80, y: 420 },
+    { x: 620, y: 420 },
+    { x: 620, y: 600 },
+    { x: 80, y: 240 },
   ];
   return spots[index % spots.length];
 }
@@ -113,8 +119,8 @@ io.on('connection', socket => {
     if (players[socket.id]) return;
     const cleanName = (name || 'Player').toString().slice(0, 16).trim() || 'Player';
     const idx = Object.keys(players).length;
-    if (idx >= 8) {
-      socket.emit('joinRejected', { reason: 'Lobby is full.' });
+    if (idx >= MAX_PLAYERS) {
+      socket.emit('joinRejected', { reason: 'Lobby is full (5 riders max).' });
       return;
     }
     const pos = spawnPosition(idx);
@@ -127,7 +133,12 @@ io.on('connection', socket => {
       seat: null,
       input: { up: false, down: false, left: false, right: false },
     };
-    socket.emit('joined', { id: socket.id, seatPositions: SEAT_POSITIONS, canvas: { w: CANVAS_W, h: CANVAS_H } });
+    socket.emit('joined', {
+      id: socket.id,
+      seats: SEATS,
+      dogCarrier: DOG_CARRIER,
+      canvas: { w: CANVAS_W, h: CANVAS_H },
+    });
   });
 
   socket.on('input', dir => {
