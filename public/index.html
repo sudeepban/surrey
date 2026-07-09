@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Surrey Lobby</title>
 <link rel="stylesheet" href="style.css" />
 </head>
@@ -20,12 +20,20 @@
 
 <div id="gameScreen" class="screen hidden">
   <div id="hud">
-    <div id="status">Walk up to the bike and press <kbd>E</kbd> to sit. Stand next to a taken seat and press <kbd>E</kbd> to push them off.</div>
+    <div id="status">Drag the stick to walk to the bike. Tap <kbd>E</kbd> to sit — or to push someone out of a seat you're standing next to.</div>
     <div id="countdown" class="hidden"></div>
   </div>
-  <canvas id="canvas" width="700" height="680"></canvas>
+  <div id="canvasWrap">
+    <canvas id="canvas" width="700" height="680"></canvas>
+  </div>
   <div id="rosterWrap">
     <div id="roster"></div>
+  </div>
+  <div id="touchControls">
+    <div id="joystickBase" class="touch-el">
+      <div id="joystickKnob"></div>
+    </div>
+    <button id="interactBtn" class="touch-el">E</button>
   </div>
 </div>
 

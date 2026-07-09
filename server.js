@@ -18,7 +18,7 @@ const CANVAS_H = 680;
 const SEATS = [
   { x: 350, y: 170, type: 'basket', wheel: false, pedal: false }, // 0: front basket
   { x: 220, y: 330, type: 'bench', wheel: true, pedal: true },    // 1: front row left
-  { x: 350, y: 330, type: 'bench', wheel: false, pedal: true },   // 2: front row center
+  { x: 350, y: 330, type: 'bench', wheel: false, pedal: false },  // 2: front row center (no pedal)
   { x: 480, y: 330, type: 'bench', wheel: true, pedal: true },    // 3: front row right
   { x: 250, y: 480, type: 'back', wheel: false, pedal: true },    // 4: back left
 ];
