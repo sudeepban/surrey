@@ -9,13 +9,25 @@
   const rosterEl = document.getElementById('roster');
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const joystickBase = document.getElementById('joystickBase');
+  const joystickKnob = document.getElementById('joystickKnob');
+  const interactBtn = document.getElementById('interactBtn');
 
   const socket = io();
   let myId = null;
-  let seatPositions = [];
+  let seats = []; // [{x,y,type,wheel,pedal,index}]
+  let dogCarrier = null;
   let latestState = { players: [], gameState: 'lobby', countdownValue: 0 };
   const SEAT_RADIUS = 60;
   const PLAYER_RADIUS = 18;
+  const SEAT_LABELS = ['basket', 'front-left', 'front-center', 'front-right', 'back-left'];
+
+  // Everything is drawn in world coordinates, then the whole scene is scaled
+  // down onto a small backing canvas and blown back up with nearest-neighbor
+  // scaling (CSS `image-rendering: pixelated`) for a chunky pixel-art look.
+  const PIXEL_SCALE = 4;
+  let worldW = 700, worldH = 680;
 
   function showScreen(el) {
     [joinScreen, gameScreen, startedScreen].forEach(s => s.classList.add('hidden'));
@@ -37,9 +49,18 @@
     joinError.textContent = reason;
   });
 
-  socket.on('joined', ({ id, seatPositions: seats }) => {
+  socket.on('joined', ({ id, seats: seatData, dogCarrier: carrier, canvas: dims }) => {
     myId = id;
-    seatPositions = seats;
+    seats = seatData.map((s, i) => ({ ...s, index: i }));
+    dogCarrier = carrier;
+    if (dims) {
+      worldW = dims.w;
+      worldH = dims.h;
+      canvas.width = Math.round(worldW / PIXEL_SCALE);
+      canvas.height = Math.round(worldH / PIXEL_SCALE);
+      canvas.style.aspectRatio = `${worldW} / ${worldH}`;
+      ctx.imageSmoothingEnabled = false;
+    }
     showScreen(gameScreen);
   });
 
@@ -74,7 +95,7 @@
         const state = document.createElement('span');
         if (p.seat !== null) {
           state.className = 'roster-seat';
-          state.textContent = ` seat ${p.seat + 1}`;
+          state.textContent = ` ${SEAT_LABELS[p.seat] || 'seat ' + (p.seat + 1)}`;
         } else {
           state.className = 'roster-standing';
           state.textContent = ' standing';
@@ -86,7 +107,7 @@
       });
   }
 
-  // --- Input handling ---
+  // --- Input handling (keyboard for desktop, virtual joystick for touch) ---
   const keys = { up: false, down: false, left: false, right: false };
   let lastSent = null;
 
@@ -130,19 +151,73 @@
     }
   });
 
-  // --- Rendering ---
+  // Virtual joystick (pointer events cover touch, mouse and pen uniformly)
+  let joystickPointerId = null;
+
+  function updateJoystick(clientX, clientY) {
+    const rect = joystickBase.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = clientX - cx;
+    const dy = clientY - cy;
+    const maxDist = rect.width / 2;
+    const dist = Math.min(Math.hypot(dx, dy), maxDist);
+    const angle = Math.atan2(dy, dx);
+    const kx = Math.cos(angle) * dist;
+    const ky = Math.sin(angle) * dist;
+    joystickKnob.style.transform = `translate(${kx}px, ${ky}px)`;
+
+    const deadzone = maxDist * 0.3;
+    keys.up = dy < -deadzone;
+    keys.down = dy > deadzone;
+    keys.left = dx < -deadzone;
+    keys.right = dx > deadzone;
+    sendInputIfChanged();
+  }
+
+  function resetJoystick() {
+    joystickPointerId = null;
+    joystickKnob.style.transform = 'translate(0px, 0px)';
+    keys.up = keys.down = keys.left = keys.right = false;
+    sendInputIfChanged();
+  }
+
+  joystickBase.addEventListener('pointerdown', e => {
+    joystickPointerId = e.pointerId;
+    joystickBase.setPointerCapture(e.pointerId);
+    updateJoystick(e.clientX, e.clientY);
+    e.preventDefault();
+  });
+  joystickBase.addEventListener('pointermove', e => {
+    if (joystickPointerId !== e.pointerId) return;
+    updateJoystick(e.clientX, e.clientY);
+    e.preventDefault();
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
+    joystickBase.addEventListener(evt, e => {
+      if (joystickPointerId !== e.pointerId) return;
+      resetJoystick();
+    });
+  });
+
+  interactBtn.addEventListener('pointerdown', e => {
+    socket.emit('interact');
+    e.preventDefault();
+  });
+
+  // --- Rendering (pixel-art style: flat colors, no gradients/anti-aliasing) ---
   function drawWheel(x, y, r) {
     ctx.save();
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fillStyle = '#111';
+    ctx.fillStyle = '#161616';
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(x, y, r * 0.35, 0, Math.PI * 2);
-    ctx.fillStyle = '#555';
+    ctx.arc(x, y, r * 0.4, 0, Math.PI * 2);
+    ctx.fillStyle = '#6b6b6b';
     ctx.fill();
-    ctx.strokeStyle = '#888';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#8f8f8f';
+    ctx.lineWidth = 3;
     for (let i = 0; i < 6; i++) {
       const a = (Math.PI / 3) * i;
       ctx.beginPath();
@@ -157,126 +232,240 @@
     ctx.save();
     ctx.beginPath();
     ctx.arc(x, y, 16, 0, Math.PI * 2);
-    ctx.strokeStyle = '#222';
-    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 5;
     ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(x - 16, y);
     ctx.lineTo(x + 16, y);
     ctx.moveTo(x, y - 16);
     ctx.lineTo(x, y + 16);
-    ctx.strokeStyle = '#222';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 4;
     ctx.stroke();
     ctx.restore();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function highlightRing(seatIndex, seat) {
+    const occ = latestState.players.find(p => p.seat === seatIndex);
+    const me = latestState.players.find(p => p.id === myId);
+    if (!me || me.seat !== null) return;
+    const d = Math.hypot(me.x - seat.x, me.y - seat.y);
+    if (d >= SEAT_RADIUS) return;
+    ctx.beginPath();
+    ctx.ellipse(seat.x, seat.y, 34, 24, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = occ ? '#ff5252' : '#7ee787';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+  }
+
+  function drawSeat(seat) {
+    if (seat.pedal) {
+      ctx.fillStyle = '#2b2b2b';
+      ctx.fillRect(seat.x - 14, seat.y + 34, 28, 10);
+    }
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(seat.x, seat.y, 30, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+    highlightRing(seat.index, seat);
+    ctx.restore();
+
+    if (seat.wheel) drawSteeringWheel(seat.x, seat.y - 40);
+  }
+
+  function drawBasketSeat(seat) {
+    ctx.save();
+    ctx.strokeStyle = '#b0bec5';
+    ctx.lineWidth = 4;
+    const w = 76, h = 54;
+    ctx.strokeRect(seat.x - w / 2, seat.y - h / 2, w, h);
+    for (let i = 1; i < 4; i++) {
+      const yy = seat.y - h / 2 + (h / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(seat.x - w / 2, yy);
+      ctx.lineTo(seat.x + w / 2, yy);
+      ctx.stroke();
+    }
+    ctx.restore();
+    drawSeat(seat);
+  }
+
+  // Hand-drawn low-poly Akita face — flat shapes read cleanly once
+  // rasterized at the small backing resolution and blown back up.
+  function drawAkitaFace(cx, cy) {
+    const FUR = '#e0a86a';
+    const FUR_DARK = '#c98a48';
+    const CREAM = '#f5e2c4';
+    ctx.save();
+    // ears
+    ctx.fillStyle = FUR_DARK;
+    ctx.beginPath();
+    ctx.moveTo(cx - 20, cy - 8);
+    ctx.lineTo(cx - 26, cy - 30);
+    ctx.lineTo(cx - 8, cy - 16);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(cx + 20, cy - 8);
+    ctx.lineTo(cx + 26, cy - 30);
+    ctx.lineTo(cx + 8, cy - 16);
+    ctx.closePath();
+    ctx.fill();
+
+    // head
+    ctx.fillStyle = FUR;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 20, 0, Math.PI * 2);
+    ctx.fill();
+
+    // cream muzzle
+    ctx.fillStyle = CREAM;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 8, 11, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // eyes
+    ctx.fillStyle = '#241a10';
+    ctx.fillRect(cx - 11, cy - 4, 5, 5);
+    ctx.fillRect(cx + 6, cy - 4, 5, 5);
+
+    // nose
+    ctx.fillRect(cx - 3, cy + 6, 6, 5);
+    ctx.restore();
+  }
+
+  function drawDogCarrier(pos) {
+    ctx.save();
+    ctx.fillStyle = '#2b2b2b';
+    roundRect(pos.x - 38, pos.y - 30, 76, 60, 8);
+    ctx.fill();
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.fillStyle = '#3a3a3a';
+    roundRect(pos.x - 26, pos.y - 20, 52, 34, 4);
+    ctx.fill();
+    ctx.restore();
+
+    drawAkitaFace(pos.x, pos.y - 2);
   }
 
   function drawBike() {
-    if (!seatPositions.length) return;
-    const first = seatPositions[0];
-    const last = seatPositions[seatPositions.length - 1];
-    const frameY = first.y;
+    if (!seats.length || !dogCarrier) return;
+    const basket = seats.find(s => s.type === 'basket');
+    const bench = seats.filter(s => s.type === 'bench');
+    const backSeat = seats.find(s => s.type === 'back');
 
-    // main frame bar
+    const benchBarY = bench[0].y + 30;
+    const backBarY = backSeat.y + 30;
+    const benchMinX = Math.min(...bench.map(s => s.x)) - 60;
+    const benchMaxX = Math.max(...bench.map(s => s.x)) + 60;
+    const backMinX = Math.min(backSeat.x, dogCarrier.x) - 60;
+    const backMaxX = Math.max(backSeat.x, dogCarrier.x) + 60;
+    const benchCenterX = bench[Math.floor(bench.length / 2)].x;
+    const backCenterX = (backSeat.x + dogCarrier.x) / 2;
+
     ctx.save();
     ctx.strokeStyle = '#c62828';
+    ctx.lineCap = 'square';
+
     ctx.lineWidth = 14;
-    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(first.x - 60, frameY + 30);
-    ctx.lineTo(last.x + 60, frameY + 30);
+    ctx.moveTo(benchMinX, benchBarY);
+    ctx.lineTo(benchMaxX, benchBarY);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(backMinX, backBarY);
+    ctx.lineTo(backMaxX, backBarY);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(benchCenterX, benchBarY);
+    ctx.lineTo(backCenterX, backBarY);
     ctx.stroke();
 
-    // diagonal struts up to each seat
     ctx.lineWidth = 8;
-    seatPositions.forEach(seat => {
+    ctx.beginPath();
+    ctx.moveTo(basket.x, basket.y + 20);
+    ctx.lineTo(basket.x, benchBarY);
+    ctx.stroke();
+    bench.forEach(seat => {
       ctx.beginPath();
-      ctx.moveTo(seat.x, frameY + 30);
+      ctx.moveTo(seat.x, benchBarY);
       ctx.lineTo(seat.x, seat.y);
       ctx.stroke();
     });
+    ctx.beginPath();
+    ctx.moveTo(backSeat.x, backBarY);
+    ctx.lineTo(backSeat.x, backSeat.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(dogCarrier.x, backBarY);
+    ctx.lineTo(dogCarrier.x, dogCarrier.y);
+    ctx.stroke();
     ctx.restore();
 
-    // wheels at both ends
-    drawWheel(first.x - 60, frameY + 30, 34);
-    drawWheel(last.x + 60, frameY + 30, 34);
+    // wheels: one steerable front wheel above the basket, two rear wheels under the back row
+    drawWheel(basket.x, basket.y - 60, 28);
+    drawWheel(backSeat.x, backBarY + 50, 32);
+    drawWheel(dogCarrier.x, backBarY + 50, 32);
 
-    // seats + pedals + steering wheels
-    seatPositions.forEach((seat, i) => {
-      // pedal
-      ctx.fillStyle = '#333';
-      ctx.fillRect(seat.x - 14, seat.y + 34, 28, 10);
-
-      // seat cushion
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      const occ = latestState.players.find(p => p.seat === i);
-      ctx.beginPath();
-      ctx.ellipse(seat.x, seat.y, 30, 20, 0, 0, Math.PI * 2);
-      ctx.fill();
-      if (!occ) {
-        // glow ring if empty and someone standing is close enough to sit
-        const me = latestState.players.find(p => p.id === myId);
-        if (me && me.seat === null) {
-          const d = Math.hypot(me.x - seat.x, me.y - seat.y);
-          if (d < SEAT_RADIUS) {
-            ctx.beginPath();
-            ctx.ellipse(seat.x, seat.y, 34, 24, 0, 0, Math.PI * 2);
-            ctx.strokeStyle = '#7ee787';
-            ctx.lineWidth = 3;
-            ctx.stroke();
-          }
-        }
-      } else if (occ.id !== myId) {
-        const me = latestState.players.find(p => p.id === myId);
-        if (me && me.seat === null) {
-          const d = Math.hypot(me.x - seat.x, me.y - seat.y);
-          if (d < SEAT_RADIUS) {
-            ctx.beginPath();
-            ctx.ellipse(seat.x, seat.y, 34, 24, 0, 0, Math.PI * 2);
-            ctx.strokeStyle = '#ff5252';
-            ctx.lineWidth = 3;
-            ctx.stroke();
-          }
-        }
-      }
-      ctx.restore();
-
-      // steering wheel on the two front-most seats
-      if (i < 2) drawSteeringWheel(seat.x, seat.y - 40);
-    });
+    drawBasketSeat(basket);
+    bench.forEach(drawSeat);
+    drawSeat(backSeat);
+    drawDogCarrier(dogCarrier);
   }
 
+  // Simple top-down pixel character: square torso + head, blocky by design.
   function drawPlayer(p) {
     ctx.save();
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, PLAYER_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(p.x - 12, p.y + 10, 24, 8);
+
     ctx.fillStyle = p.color;
-    ctx.fill();
+    ctx.fillRect(p.x - 14, p.y - 6, 28, 22);
+    ctx.fillRect(p.x - 10, p.y - 20, 20, 16);
+
     if (p.id === myId) {
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = '#fff';
-      ctx.stroke();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(p.x - 14, p.y - 6, 28, 22);
+      ctx.strokeRect(p.x - 10, p.y - 20, 20, 16);
     }
-    ctx.fillStyle = '#fff';
-    ctx.font = '12px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(p.name, p.x, p.y - PLAYER_RADIUS - 6);
+
+    ctx.fillStyle = '#241a10';
+    ctx.fillRect(p.x - 6, p.y - 14, 4, 4);
+    ctx.fillRect(p.x + 2, p.y - 14, 4, 4);
     ctx.restore();
   }
 
   function render() {
+    ctx.save();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(1 / PIXEL_SCALE, 1 / PIXEL_SCALE);
 
     // ground stripes
     ctx.fillStyle = 'rgba(255,255,255,0.05)';
-    for (let x = 0; x < canvas.width; x += 60) {
-      ctx.fillRect(x, 0, 30, canvas.height);
+    for (let x = 0; x < worldW; x += 60) {
+      ctx.fillRect(x, 0, 30, worldH);
     }
 
     drawBike();
     latestState.players.forEach(drawPlayer);
 
+    ctx.restore();
     requestAnimationFrame(render);
   }
   requestAnimationFrame(render);
